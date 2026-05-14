@@ -2,9 +2,14 @@
  * Hook implementations for the Hindsight OpenCode plugin.
  *
  * Hooks:
- *   - event (session.created) → recall memories and inject into system prompt
  *   - event (session.idle) → auto-retain conversation transcript
- *   - experimental.session.compacting → inject memories into compaction context
+ *   - experimental.session.compacting → retain + inject memories into compaction context
+ *   - experimental.chat.system.transform → recall every turn, inject only when relevant
+ *
+ * Per-turn recall strategy:
+ *   1. Recall using the last N turns (user + assistant) as query context
+ *   2. Hash the result set — if unchanged from last turn, reuse the cached block (vLLM prefix cache hit)
+ *   3. If the memory set changed, call reflect to synthesize a fresh block, then cache it
  */
 
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
@@ -12,7 +17,6 @@ import type { HindsightConfig } from "./config.js";
 import { debugLog } from "./config.js";
 import {
   formatMemories,
-  formatCurrentTime,
   stripMemoryTags,
   composeRecallQuery,
   truncateRecallQuery,
@@ -25,8 +29,10 @@ import { ensureBankMission } from "./bank.js";
 export interface PluginState {
   turnCount: number;
   missionsSet: Set<string>;
-  /** Track sessions we've already injected recall into */
-  recalledSessions: Set<string>;
+  /** Per-session hash of last recalled memory set, for change detection */
+  lastMemoryHash: Map<string, string>;
+  /** Per-session last synthesized memory block, reused when hash is stable */
+  lastBlock: Map<string, string>;
   /** Track last retained turn count per session to avoid duplicates */
   lastRetainedTurn: Map<string, number>;
 }
@@ -82,6 +88,8 @@ export interface HindsightHooks {
   ) => Promise<void>;
 }
 
+const MAX_CACHED_SESSIONS = 1000;
+
 export function createHooks(
   hindsightClient: HindsightClient,
   bankId: string,
@@ -90,13 +98,11 @@ export function createHooks(
   opencodeClient: OpencodeClient
 ): HindsightHooks {
   interface RecallOutcome {
-    /** formatted context string, or null if no results */
     context: string | null;
-    /** true if the API call succeeded (even with 0 results) */
     ok: boolean;
   }
 
-  /** Recall memories and format as context string */
+  /** Recall memories and format as raw context string (used by compaction). */
   async function recallForContext(query: string): Promise<RecallOutcome> {
     try {
       const response = await hindsightClient.recall(bankId, query, {
@@ -113,8 +119,7 @@ export function createHooks(
       const formatted = formatMemories(results);
       const context =
         `<hindsight_memories>\n` +
-        `${config.recallPromptPreamble}\n` +
-        `Current time: ${formatCurrentTime()} UTC\n\n` +
+        `${config.recallPromptPreamble}\n\n` +
         `${formatted}\n` +
         `</hindsight_memories>`;
       return { context, ok: true };
@@ -166,13 +171,10 @@ export function createHooks(
 
     if (retainFullWindow) {
       targetMessages = messages;
-      // Full-session upserts the same document each time
       documentId = sessionId;
     } else {
-      // Sliding window: retainEveryNTurns + overlap
       const windowTurns = config.retainEveryNTurns + config.retainOverlapTurns;
       targetMessages = sliceLastTurnsByUserBoundary(messages, windowTurns);
-      // Chunked mode: unique document per chunk
       documentId = `${sessionId}-${Date.now()}`;
     }
 
@@ -199,7 +201,6 @@ export function createHooks(
     const messages = await getSessionMessages(sessionId);
     if (!messages.length) return;
 
-    // Count user turns
     const userTurns = messages.filter((m) => m.role === "user").length;
     const lastRetained = state.lastRetainedTurn.get(sessionId) || 0;
     debugLog(
@@ -207,7 +208,6 @@ export function createHooks(
       `handleSessionIdle: userTurns=${userTurns}, lastRetained=${lastRetained}, retainEveryNTurns=${config.retainEveryNTurns}`
     );
 
-    // Only retain if enough new turns since last retain
     if (userTurns - lastRetained < config.retainEveryNTurns) return;
 
     try {
@@ -230,19 +230,6 @@ export function createHooks(
           await handleSessionIdle(sessionId);
         }
       }
-
-      if (evt.type === "session.created") {
-        const session = evt.properties.info as { id?: string; title?: string } | undefined;
-        const sessionId = session?.id;
-        if (sessionId && config.autoRecall && !state.recalledSessions.has(sessionId)) {
-          state.recalledSessions.add(sessionId);
-          // Cap tracked sessions
-          if (state.recalledSessions.size > 1000) {
-            const first = state.recalledSessions.values().next().value;
-            if (first) state.recalledSessions.delete(first);
-          }
-        }
-      }
     } catch (e) {
       debugLog(config, "Event hook error:", e);
     }
@@ -250,13 +237,10 @@ export function createHooks(
 
   const compacting = async (input: CompactingInput, output: CompactingOutput): Promise<void> => {
     try {
-      // First, retain what we have before compaction (using shared retention logic)
       const messages = await getSessionMessages(input.sessionID);
       if (messages.length && config.autoRetain) {
         try {
           await retainSession(input.sessionID, messages);
-          // Reset turn tracking — after compaction the message list shrinks,
-          // so the old lastRetainedTurn value would block future idle retains.
           state.lastRetainedTurn.delete(input.sessionID);
           debugLog(config, "Pre-compaction retain completed");
         } catch (e) {
@@ -264,7 +248,6 @@ export function createHooks(
         }
       }
 
-      // Then recall relevant memories to inject into compaction context
       if (messages.length) {
         const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
         if (lastUserMsg) {
@@ -298,25 +281,91 @@ export function createHooks(
       const sessionId = input.sessionID;
       if (!sessionId) return;
 
-      // Only inject on first message of a session (tracked by recalledSessions)
-      if (!state.recalledSessions.has(sessionId)) return;
+      // Fetch current conversation (user + assistant turns)
+      const messages = await getSessionMessages(sessionId);
+      if (!messages.length) return;
 
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      if (!lastUserMsg) return;
+
+      // Compose query from recent turns of both roles
+      const query = truncateRecallQuery(
+        composeRecallQuery(lastUserMsg.content, messages, config.recallContextTurns),
+        lastUserMsg.content,
+        config.recallMaxQueryChars
+      );
+
+      // Recall to detect what's relevant
+      let results: Array<{ text: string; type?: string | null; mentioned_at?: string | null }>;
+      try {
+        const response = await hindsightClient.recall(bankId, query, {
+          budget: config.recallBudget as "low" | "mid" | "high",
+          maxTokens: config.recallMaxTokens,
+          types: config.recallTypes,
+          tags: config.recallTags.length ? config.recallTags : undefined,
+          tagsMatch: config.recallTags.length ? config.recallTagsMatch : undefined,
+        });
+        results = response.results || [];
+      } catch (e) {
+        debugLog(config, "Recall failed:", e);
+        return;
+      }
+
+      if (!results.length) {
+        // No relevant memories — clear cache so next change is detected cleanly
+        state.lastMemoryHash.delete(sessionId);
+        state.lastBlock.delete(sessionId);
+        return;
+      }
+
+      // Hash by memory content to detect changes
+      const hash = results.map((r) => r.text).join("\0");
+      const cachedHash = state.lastMemoryHash.get(sessionId);
+      const cachedBlock = state.lastBlock.get(sessionId);
+
+      if (cachedHash === hash && cachedBlock) {
+        // Same memories as last turn — inject cached block for vLLM prefix cache hit
+        output.system.push(cachedBlock);
+        debugLog(config, `Injected stable memory block for session ${sessionId}`);
+        return;
+      }
+
+      // Memory set changed — synthesize a fresh block via reflect
       await ensureBankMission(hindsightClient, bankId, config, state.missionsSet);
 
-      // Use a generic project-context query for session start
-      const query = `project context and recent work`;
-      const { context, ok } = await recallForContext(query);
-
-      // Consume after a successful API round-trip (even with 0 results).
-      // Only preserve retry for transient API failures (ok=false).
-      if (ok) {
-        state.recalledSessions.delete(sessionId);
+      let block: string;
+      try {
+        const reflectResponse = await hindsightClient.reflect(bankId, query, {
+          budget: config.recallBudget as "low" | "mid" | "high",
+        });
+        if (!reflectResponse.text) return;
+        block =
+          `<hindsight_memories>\n` +
+          `${config.recallPromptPreamble}\n\n` +
+          `${reflectResponse.text}\n` +
+          `</hindsight_memories>`;
+      } catch (e) {
+        debugLog(config, "Reflect failed, using formatted memories:", e);
+        block =
+          `<hindsight_memories>\n` +
+          `${config.recallPromptPreamble}\n\n` +
+          `${formatMemories(results)}\n` +
+          `</hindsight_memories>`;
       }
 
-      if (context) {
-        output.system.push(context);
-        debugLog(config, `Injected recall context for session ${sessionId}`);
+      // Cap map size to prevent unbounded growth across long-running sessions
+      if (state.lastMemoryHash.size >= MAX_CACHED_SESSIONS) {
+        const first = state.lastMemoryHash.keys().next().value;
+        if (first) {
+          state.lastMemoryHash.delete(first);
+          state.lastBlock.delete(first);
+        }
       }
+
+      state.lastMemoryHash.set(sessionId, hash);
+      state.lastBlock.set(sessionId, block);
+      output.system.push(block);
+      debugLog(config, `Injected updated memory block for session ${sessionId}`);
     } catch (e) {
       debugLog(config, "System transform hook error:", e);
     }

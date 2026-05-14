@@ -100,30 +100,50 @@ describe("HindsightPlugin state sharing", () => {
     vi.clearAllMocks();
   });
 
-  it("shares state across multiple plugin instantiations (sessions)", async () => {
+  it("shares cached memory state across multiple plugin instantiations", async () => {
     process.env.HINDSIGHT_API_URL = "http://localhost:8888";
 
-    // Simulate two sessions calling the plugin (OpenCode instantiates per session)
-    const result1 = await HindsightPlugin(mockPluginInput as any);
-    const result2 = await HindsightPlugin(mockPluginInput as any);
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
+    ];
+    const pluginInputWithMessages = {
+      ...mockPluginInput,
+      client: {
+        session: {
+          messages: vi.fn().mockResolvedValue({ data: messages }),
+        },
+      },
+    };
 
-    // Trigger session.created on session 1 — should track 'sess-A'
-    await result1.event!({
-      event: { type: "session.created", properties: { info: { id: "sess-A" } } },
-    });
+    // Simulate two plugin instances (OpenCode instantiates per session)
+    const result1 = await HindsightPlugin(pluginInputWithMessages as any);
+    const result2 = await HindsightPlugin(pluginInputWithMessages as any);
 
-    // Session 2's system transform should see 'sess-A' because state is shared
-    const output = { system: [] as string[] };
+    // Prime the cache via instance 1
+    const client1 = (HindsightClient as any).mock.instances[0];
+    client1.recall.mockResolvedValue({ results: [{ text: "Cached memory", type: "world" }] });
+    client1.reflect.mockResolvedValue({ text: "Synthesized block." });
+
+    const output1 = { system: [] as string[] };
+    await result1["experimental.chat.system.transform"]!(
+      { sessionID: "sess-A", model: {} },
+      output1
+    );
+    expect(output1.system.length).toBe(1);
+
+    // Instance 2 should see the cached block (module-level state is shared)
+    const client2 = (HindsightClient as any).mock.instances[1];
+    client2.recall.mockResolvedValue({ results: [{ text: "Cached memory", type: "world" }] });
+
+    const output2 = { system: [] as string[] };
     await result2["experimental.chat.system.transform"]!(
       { sessionID: "sess-A", model: {} },
-      output
+      output2
     );
 
-    // The recall was attempted (state was shared — sess-A was found in recalledSessions).
-    // If state were per-instance, result2 would have an empty recalledSessions and skip recall.
-    // result2 uses the second HindsightClient instance (index 1).
-    const clientInstance = (HindsightClient as any).mock.instances[1];
-    expect(clientInstance.recall).toHaveBeenCalled();
+    // Cache hit — reflect not called on instance 2
+    expect(client2.reflect).not.toHaveBeenCalled();
+    expect(output2.system[0]).toBe(output1.system[0]);
   });
 });
 

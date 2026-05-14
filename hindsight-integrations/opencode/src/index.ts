@@ -30,7 +30,8 @@ import { debugLog } from "./config.js";
 const state: PluginState = {
   turnCount: 0,
   missionsSet: new Set(),
-  recalledSessions: new Set(),
+  lastMemoryHash: new Map(),
+  lastBlock: new Map(),
   lastRetainedTurn: new Map(),
 };
 

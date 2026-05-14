@@ -56,7 +56,7 @@ const DEFAULTS: HindsightConfig = {
   recallBudget: "mid",
   recallMaxTokens: 1024,
   recallTypes: ["world", "experience"],
-  recallContextTurns: 1,
+  recallContextTurns: 3,
   recallMaxQueryChars: 800,
   recallTags: [],
   recallTagsMatch: "any",
