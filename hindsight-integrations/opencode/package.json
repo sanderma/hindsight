@@ -39,6 +39,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "eval:setup": "tsx tests/promptfoo/setup.ts",
+    "eval": "npm run eval:setup && npx promptfoo@latest eval --config tests/promptfoo/promptfoo.yaml",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "peerDependencies": {
@@ -53,7 +55,8 @@
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18",
-    "promptfoo": "^0.103.5"
+    "promptfoo": "^0.103.5",
+    "tsx": "^4.19.2"
   },
   "engines": {
     "node": ">=22"
