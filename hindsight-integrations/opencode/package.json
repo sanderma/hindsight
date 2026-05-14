@@ -38,6 +38,7 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "peerDependencies": {
@@ -51,7 +52,8 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "promptfoo": "^0.103.5"
   },
   "engines": {
     "node": ">=22"
