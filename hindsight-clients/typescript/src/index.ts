@@ -74,6 +74,11 @@ export interface HindsightClientOptions {
    * Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
    */
   userAgent?: string;
+  /**
+   * Custom fetch implementation. Use this to route requests through a proxy or
+   * to inject custom request handling. Defaults to `globalThis.fetch`.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /**
@@ -124,6 +129,7 @@ export class HindsightClient {
       createConfig({
         baseUrl: options.baseUrl,
         headers,
+        ...(options.fetch ? { fetch: options.fetch } : {}),
       })
     );
   }

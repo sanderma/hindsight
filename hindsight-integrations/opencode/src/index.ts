@@ -24,6 +24,7 @@ import { deriveBankId } from "./bank.js";
 import { createTools } from "./tools.js";
 import { createHooks, type PluginState } from "./hooks.js";
 import { debugLog } from "./config.js";
+import { injectProxyFetch } from "./proxy.js";
 
 // Module-level state persists across sessions (plugin is instantiated per session,
 // but the module is loaded once per OpenCode server process).
@@ -51,6 +52,11 @@ const HindsightPlugin: Plugin = async (input, options) => {
     baseUrl: apiUrl,
     apiKey: config.hindsightApiToken || undefined,
   });
+
+  if (config.httpProxy) {
+    debugLog(config, `Using HTTP proxy: ${config.httpProxy}`);
+    injectProxyFetch(client, apiUrl, config.hindsightApiToken || undefined, config.httpProxy);
+  }
 
   const bankId = deriveBankId(config, input.directory);
   debugLog(config, `Initialized with bank: ${bankId}, API: ${apiUrl}`);

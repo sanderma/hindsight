@@ -94,6 +94,28 @@ describe("loadConfig", () => {
     expect(loadConfig().recallMaxTokens).toBe(1024);
   });
 
+  it("httpProxy defaults to null", () => {
+    const config = loadConfig();
+    expect(config.httpProxy).toBeNull();
+  });
+
+  it("HINDSIGHT_HTTP_PROXY env var sets httpProxy", () => {
+    process.env.HINDSIGHT_HTTP_PROXY = "http://proxy.example.com:3128";
+    const config = loadConfig();
+    expect(config.httpProxy).toBe("http://proxy.example.com:3128");
+  });
+
+  it("httpProxy can be set via plugin options", () => {
+    const config = loadConfig({ httpProxy: "http://corp-proxy:8080" });
+    expect(config.httpProxy).toBe("http://corp-proxy:8080");
+  });
+
+  it("HINDSIGHT_HTTP_PROXY overrides plugin options", () => {
+    process.env.HINDSIGHT_HTTP_PROXY = "http://env-proxy:3128";
+    const config = loadConfig({ httpProxy: "http://plugin-proxy:8080" });
+    expect(config.httpProxy).toBe("http://env-proxy:3128");
+  });
+
   it("null plugin options are ignored", () => {
     const config = loadConfig({ bankId: null, debug: undefined });
     expect(config.bankId).toBeNull(); // stays default null

@@ -11,8 +11,13 @@ vi.mock("@vectorize-io/hindsight-client", () => {
   return { HindsightClient: MockHindsightClient };
 });
 
+vi.mock("./proxy.js", () => ({
+  injectProxyFetch: vi.fn(),
+}));
+
 import { HindsightPlugin } from "./index.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
+import { injectProxyFetch } from "./proxy.js";
 
 const mockPluginInput = {
   client: {
@@ -76,6 +81,29 @@ describe("HindsightPlugin", () => {
       baseUrl: "http://localhost:8888",
       apiKey: "my-token",
     });
+  });
+
+  it("injects proxy fetch when HINDSIGHT_HTTP_PROXY is set", async () => {
+    process.env.HINDSIGHT_API_URL = "http://localhost:8888";
+    process.env.HINDSIGHT_HTTP_PROXY = "http://proxy.example.com:3128";
+
+    await HindsightPlugin(mockPluginInput as any);
+
+    const clientInstance = (HindsightClient as any).mock.instances[0];
+    expect(injectProxyFetch).toHaveBeenCalledWith(
+      clientInstance,
+      "http://localhost:8888",
+      undefined,
+      "http://proxy.example.com:3128"
+    );
+  });
+
+  it("does not inject proxy when HINDSIGHT_HTTP_PROXY is not set", async () => {
+    process.env.HINDSIGHT_API_URL = "http://localhost:8888";
+
+    await HindsightPlugin(mockPluginInput as any);
+
+    expect(injectProxyFetch).not.toHaveBeenCalled();
   });
 
   it("accepts plugin options", async () => {

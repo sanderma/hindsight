@@ -20,6 +20,7 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     retainMetadata: {},
     hindsightApiUrl: null,
     hindsightApiToken: null,
+    httpProxy: null,
     bankId: null,
     bankIdPrefix: "",
     dynamicBankId: false,
