@@ -31,6 +31,15 @@ export interface PluginState {
   lastRetainedTurn: Map<string, number>;
 }
 
+export function createPluginState(): PluginState {
+  return {
+    turnCount: 0,
+    missionsSet: new Set(),
+    recalledSessions: new Set(),
+    lastRetainedTurn: new Map(),
+  };
+}
+
 interface EventInput {
   event: {
     type: string;

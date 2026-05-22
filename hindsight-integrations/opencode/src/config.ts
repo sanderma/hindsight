@@ -36,6 +36,7 @@ export interface HindsightConfig {
   // Connection
   hindsightApiUrl: string | null;
   hindsightApiToken: string | null;
+  httpProxy: string | null;
 
   // Bank
   bankId: string | null;
@@ -77,6 +78,7 @@ const DEFAULTS: HindsightConfig = {
   // Connection
   hindsightApiUrl: null,
   hindsightApiToken: null,
+  httpProxy: null,
 
   // Bank
   bankId: null,
@@ -95,6 +97,7 @@ const DEFAULTS: HindsightConfig = {
 const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | "int"]> = {
   HINDSIGHT_API_URL: ["hindsightApiUrl", "string"],
   HINDSIGHT_API_TOKEN: ["hindsightApiToken", "string"],
+  HINDSIGHT_HTTP_PROXY: ["httpProxy", "string"],
   HINDSIGHT_BANK_ID: ["bankId", "string"],
   HINDSIGHT_AGENT_NAME: ["agentName", "string"],
   HINDSIGHT_AUTO_RECALL: ["autoRecall", "bool"],

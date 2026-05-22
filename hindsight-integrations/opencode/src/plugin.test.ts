@@ -11,8 +11,13 @@ vi.mock("@vectorize-io/hindsight-client", () => {
   return { HindsightClient: MockHindsightClient };
 });
 
+vi.mock("./proxy.js", () => ({
+  injectProxyFetch: vi.fn(),
+}));
+
 import { HindsightPlugin } from "./index.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
+import { injectProxyFetch } from "./proxy.js";
 
 const mockPluginInput = {
   client: {
@@ -78,6 +83,29 @@ describe("HindsightPlugin", () => {
     });
   });
 
+  it("injects proxy fetch when HINDSIGHT_HTTP_PROXY is set", async () => {
+    process.env.HINDSIGHT_API_URL = "http://localhost:8888";
+    process.env.HINDSIGHT_HTTP_PROXY = "http://proxy.example.com:3128";
+
+    await HindsightPlugin(mockPluginInput as any);
+
+    const clientInstance = (HindsightClient as any).mock.instances[0];
+    expect(injectProxyFetch).toHaveBeenCalledWith(
+      clientInstance,
+      "http://localhost:8888",
+      undefined,
+      "http://proxy.example.com:3128"
+    );
+  });
+
+  it("does not inject proxy when HINDSIGHT_HTTP_PROXY is not set", async () => {
+    process.env.HINDSIGHT_API_URL = "http://localhost:8888";
+
+    await HindsightPlugin(mockPluginInput as any);
+
+    expect(injectProxyFetch).not.toHaveBeenCalled();
+  });
+
   it("accepts plugin options", async () => {
     const result = await HindsightPlugin(mockPluginInput as any, {
       hindsightApiUrl: "http://example.com",
@@ -136,5 +164,44 @@ describe("plugin default export", () => {
     // the same reference as the named HindsightPlugin export to avoid
     // running the factory twice.
     expect(mod.default).toBe(mod.HindsightPlugin);
+  });
+});
+
+describe("createPluginState export", () => {
+  it("is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createPluginState).toBe("function");
+  });
+
+  it("returns correct initial state", async () => {
+    const { createPluginState } = await import("./index.js");
+    const state = createPluginState();
+    expect(state.turnCount).toBe(0);
+    expect(state.missionsSet).toBeInstanceOf(Set);
+    expect(state.missionsSet.size).toBe(0);
+    expect(state.recalledSessions).toBeInstanceOf(Set);
+    expect(state.recalledSessions.size).toBe(0);
+    expect(state.lastRetainedTurn).toBeInstanceOf(Map);
+    expect(state.lastRetainedTurn.size).toBe(0);
+  });
+
+  it("returns a fresh independent state on each call", async () => {
+    const { createPluginState } = await import("./index.js");
+    const state1 = createPluginState();
+    const state2 = createPluginState();
+    state1.missionsSet.add("bank-a");
+    expect(state2.missionsSet.size).toBe(0);
+  });
+});
+
+describe("createTools and createHooks exports", () => {
+  it("createTools is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createTools).toBe("function");
+  });
+
+  it("createHooks is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createHooks).toBe("function");
   });
 });
