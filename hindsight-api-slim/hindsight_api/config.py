@@ -451,6 +451,10 @@ ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
 
+# User identity header
+ENV_USER_IDENTITY_HEADER = "HINDSIGHT_API_USER_IDENTITY_HEADER"
+DEFAULT_USER_IDENTITY_HEADER = ""  # empty = feature disabled
+
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
 ENV_DISPOSITION_LITERALISM = "HINDSIGHT_API_DISPOSITION_LITERALISM"
@@ -1169,6 +1173,12 @@ class HindsightConfig:
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
 
+    # User identity header (static - server-level only)
+    # When set, @me in bank_id paths is resolved to the value of this header.
+    # Intended for use with Istio/service-mesh JWT validation that forwards
+    # identity claims as trusted headers (e.g. x-auth-sub).
+    user_identity_header: str  # empty string = feature disabled
+
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
     webhook_secret: str | None  # HMAC signing secret (None = unsigned)
@@ -1868,6 +1878,8 @@ class HindsightConfig:
             audit_log_retention_days=int(
                 os.getenv(ENV_AUDIT_LOG_RETENTION_DAYS, str(DEFAULT_AUDIT_LOG_RETENTION_DAYS))
             ),
+            # User identity header (static, server-level only)
+            user_identity_header=os.getenv(ENV_USER_IDENTITY_HEADER, DEFAULT_USER_IDENTITY_HEADER),
             # Webhook configuration (static, server-level only)
             webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,
             webhook_secret=os.getenv(ENV_WEBHOOK_SECRET) or DEFAULT_WEBHOOK_SECRET,

@@ -166,3 +166,42 @@ describe("plugin default export", () => {
     expect(mod.default).toBe(mod.HindsightPlugin);
   });
 });
+
+describe("createPluginState export", () => {
+  it("is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createPluginState).toBe("function");
+  });
+
+  it("returns correct initial state", async () => {
+    const { createPluginState } = await import("./index.js");
+    const state = createPluginState();
+    expect(state.turnCount).toBe(0);
+    expect(state.missionsSet).toBeInstanceOf(Set);
+    expect(state.missionsSet.size).toBe(0);
+    expect(state.recalledSessions).toBeInstanceOf(Set);
+    expect(state.recalledSessions.size).toBe(0);
+    expect(state.lastRetainedTurn).toBeInstanceOf(Map);
+    expect(state.lastRetainedTurn.size).toBe(0);
+  });
+
+  it("returns a fresh independent state on each call", async () => {
+    const { createPluginState } = await import("./index.js");
+    const state1 = createPluginState();
+    const state2 = createPluginState();
+    state1.missionsSet.add("bank-a");
+    expect(state2.missionsSet.size).toBe(0);
+  });
+});
+
+describe("createTools and createHooks exports", () => {
+  it("createTools is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createTools).toBe("function");
+  });
+
+  it("createHooks is exported from index.ts", async () => {
+    const mod = await import("./index.js");
+    expect(typeof mod.createHooks).toBe("function");
+  });
+});

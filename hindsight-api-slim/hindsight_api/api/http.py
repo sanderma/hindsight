@@ -2741,6 +2741,41 @@ def create_app(
 
     app.openapi = _patched_openapi  # type: ignore[assignment]
 
+    # Add @me bank alias resolution middleware
+    @app.middleware("http")
+    async def resolve_me_bank_alias(request: Request, call_next: Callable) -> Any:
+        """Resolve @me bank alias to the caller's identity from a trusted header.
+
+        When HINDSIGHT_API_USER_IDENTITY_HEADER is configured (e.g. x-auth-sub,
+        set by Istio after JWT validation), any bank_id of '@me' in the request
+        path is replaced with the header value before routing. This lets clients
+        use a stable bank alias without knowing their own user ID.
+        """
+        from fastapi.responses import JSONResponse
+
+        path = request.scope.get("path", "")
+        if "/@me" in path:
+            config = get_config()
+            if not config.user_identity_header:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "@me bank alias requires HINDSIGHT_API_USER_IDENTITY_HEADER to be configured"},
+                )
+            identity = request.headers.get(config.user_identity_header)
+            if not identity:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": f"Missing identity header '{config.user_identity_header}' required for @me resolution"
+                    },
+                )
+            # Replace /@me/ (in path) and /@me at end of path
+            new_path = re.sub(r"/(@me)(?=/|$)", f"/{identity}", path)
+            request.scope["path"] = new_path
+            if "raw_path" in request.scope:
+                request.scope["raw_path"] = new_path.encode("utf-8")
+        return await call_next(request)
+
     # Add unknown parameters detection middleware
     @app.middleware("http")
     async def unknown_params_middleware(request, call_next):
